@@ -33,9 +33,11 @@ Concepts
 Frame
   A frame is a coordinate frame located in 3-D space, in relation with other frames through a set of probabilistic transformations.
   These are encoding as **SM: What is this encoding?**
+  **PTF: In my code, there is no explicit encoding. Frames are vertices in the graph. Data can be stored there but that does not have anything to do with the graph itself. Transformations are stored on the edges so there is no need to put geometric data in the graph at the vertices.**
   Frames have unique identifiers, and can optionally have human-readable names.
 EstimatedFrame
   A graph of frames can be relaxed to have non-probabilistic poses.
+  **PTF: I'm not sure about the concept that frames are non-probabilistic after relaxation. Most estimation methods will still allow one to back out the uncertainty and you are back to a probabilistic graph.**
 Transaction
   All map queries (excepted trigger bookkeeping) must be performed in a transaction, during which the world is assured to be consistent when viewed from the client.
   A transaction might fail in case of write conflict.
@@ -62,12 +64,15 @@ Data types used in interfaces
   A list of ``EstimatedFrame``.
 ``ProbTransform``
   A probabilistic 3-D transformation **SM: What is this encoding?**
+  **I know what encoding I like. It is different than the encoding suggested for ROS. Whatever we pick, it should be clearly documented (mathematically) with a little library attached. My implementation is here https://github.com/furgalep/Schweizer-Messer/tree/master/sm_kinematics but it probably needs some more editing and documentation.**
 ``LinkId``
   A tuple ``(frame0: FrameId, frame1: FrameId)``.
 ``LinkIds``
   A list of ``LinkId``.
 ``Link``
-  A tuple ``(LinkId: link, transformation: ProbTransform, confidence: Float64)``.
+  **PTF: Here I added an edge type to allow graph searches only on a subset of edge types**
+  **PTF: I would probably also give each link a unique ide separate from the frame0/frame1 tuple. This would allow users to delete a specific link**
+  A tuple ``(link: LinkId, transformation: ProbTransform, confidence: Float64, LinkType: Int64)``.
 ``Links``
   A list of ``Link``.
 ``DataType``
@@ -79,6 +84,7 @@ Data types used in interfaces
 ``Data``
   Data with type as a tuple ``(type: DataType, value: DataBlob)``
 ``DataSet``
+  **PTF: users may also want to store data on edges**
   A (multi)map of ``FrameId -> Data``.
 ``Box``
   A three-dimensional box in space defined by its two opposite corners, hence a pair of tuples ``((xmin: Float64, ymin: Float64, zmin: Float64), (xmax: Float64, ymax: Float64, zmax: Float64))``.
@@ -115,6 +121,8 @@ Relaxation
   Their coordinates are relative to ``origin``, which therefore is identity.
 ``estimateFramesWithinBox(origin: FrameId, box: Box) -> EstimatedFrames``
   Return all frames linked to ``origin`` within ``box`` (centered on ``origin``).
+  **PTF: The box isn't just centered on origin, it is expressed in the origin coordinate frame. This makes me think we may want to allow users to add another transformation here.**
+  **PTF: What happens if part of the pose graph is within the box, but the part connecting it to ``origin`` is outside of the box?**
   Their coordinates are relative to ``origin``, which therefore is identity.
 ``estimateFramesWithinSphere(origin: FrameId, radius: Float64) -> EstimatedFrames``
   Return all frames linked to ``origin`` within ``radius`` (centered on ``origin``).
@@ -139,9 +147,10 @@ Data access
 Setters
 -------
 
-``setLink(frame0: FrameId, frame1: FrameId, transform: ProbTransform, confidence: Float64)``
+``setLink(frame0: FrameId, frame1: FrameId, transform: ProbTransform, confidence: Float64, edgeType: UInt64 )``
   Set a link between two frames, if the link (or its reverse) exists, its transform and confidence are replaced.
 ``deleteLink(frame0: FrameId, frame1: FrameId)``
+  **PTF: I think this should have a link ID. What if there is more than one link between frames? The real question is: Do we think of these links as pseudomeasurments, where you can have more than one connecting two frames? Or do we think of these links as our best guess for geometry, where pseudomeasurements used in graph relaxation should be stored at the edge?**
   Remove the link (or its reverse) between two frames.
 ``setFrameData(frame: FrameId, Data: data)``
   Set data for ``frame``, if ``data.type`` already exists, the corresponding data are overwritten.
