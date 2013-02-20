@@ -66,8 +66,10 @@ Data types used in interfaces
 ``EstimatedFrames``
   A list of ``EstimatedFrame``.
 ``ProbTransform``
-  A probabilistic 3-D transformation **SM: What is this encoding?**
-  **I know what encoding I like. It is different than the encoding suggested for ROS. Whatever we pick, it should be clearly documented (mathematically) with a little library attached. My implementation is here https://github.com/furgalep/Schweizer-Messer/tree/master/sm_kinematics but it probably needs some more editing and documentation.**
+  A probabilistic 3-D transformation.
+  
+  **SM: What is this encoding?**
+  **PTF: I know what encoding I like. It is different than the encoding suggested for ROS. Whatever we pick, it should be clearly documented (mathematically) with a little library attached. My implementation is here https://github.com/furgalep/Schweizer-Messer/tree/master/sm_kinematics but it probably needs some more editing and documentation.**
 ``LinkId``
   A tuple ``(frame0: FrameId, frame1: FrameId)``.
 ``LinkIds``
@@ -80,7 +82,7 @@ Data types used in interfaces
   **SM: I do not like the idea of having a key in addition to the tuple (frame0, frame1, LinkType)**
   **SM: Should the link type be a string? It might be more natural to use and avoid having to allocate integers across subsystems.**
   
-  A tuple ``(link: LinkId, transformation: ProbTransform, confidence: Float64, LinkType: Int64)``.
+  A tuple ``(link: LinkId, transformation: ProbTransform, confidence: Float64, LinkType: Int64)``, in which ``confidence`` expresses how much the link creator was confident that this link actually exists. This is not the same information as ``transformation``, which expresses a probabilistic transformation from ``link.frame1`` to ``link.frame0``, assuming that the link exists.
 ``Links``
   A list of ``Link``.
 ``DataType``
@@ -136,6 +138,7 @@ Relaxation
   **SM: "Centered on origin was wrong", I changed to "relative", this avoids requiring another transformation".**
   
   **PTF: What happens if part of the pose graph is within the box, but the part connecting it to ``origin`` is outside of the box?**
+  **SM: good questions, I guess that it will not be considered**
   
   Their coordinates are relative to ``origin``, which therefore is identity.
 ``estimateFramesWithinSphere(origin: FrameId, radius: Float64) -> EstimatedFrames``
@@ -174,7 +177,7 @@ Setters
   Delete data of a give type in a given frame.
 ``createFrame() -> FrameId``
   Create and return a new FrameId, which is guaranteed to be unique.
-``setFrameName(name: String)``
+``setFrameName(frame: FrameId, name: String)``
   Set the human-readable name of a frame.
 ``deleteFrame(frame: FrameId)``
   Delete a frame, all its links and all its data.
@@ -193,8 +196,8 @@ Available types
 ``framesMoved(frames: FrameIds, origin: FrameId)``
   A set of frames have been moved with respect to ``origin``.
   
-Setters
--------
+Trigger setters
+---------------
 
 These trigger-bookkeeping queries do not operate within transactions and might fail, by returning invalid trigger identifiers.
 
