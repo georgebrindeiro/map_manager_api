@@ -252,7 +252,7 @@ Available types
 ``framesMoved(frames: FrameIds, origin: FrameId)``
   A set of frames have been moved with respect to ``origin``.
 
-    FC: is it the frame that has moved or the knowledge we have of its transformation with respect to origin that has? This is unclear throughout all the API actually.
+    FC: Is it the frame that has moved or the knowledge we have of its transformation with respect to origin that has changed? This is unclear throughout all the API actually.
 
 ``frameDataChanged(frames: FrameIds, type: DataType)``
   Data have been changed for a set of watched frames and a data type.
