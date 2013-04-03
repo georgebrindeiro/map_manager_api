@@ -31,6 +31,11 @@ When RPC or messages are described, the convention ``name(arguments) -> ReturnTy
 Concepts
 ========
 
+  TODO: SM: introduce the concept of backend, possibly with a drawing. Maybe fuse with the distributed system concept.
+  
+Distribution System
+  This API aims at abstracting the database back-end in a way that would allow the latter to scale to a distributed system, conceptually able to scale to encompass all running robots on earth. This implies that the API will talk to a local node that cannot hold the whole data, and that data can be lost if part of the network collapses. This is shocking from a database point of view, but perfectly reasonable from a robotics perspective.
+
 Frame
   A frame is a coordinate frame located in 3-D space, linked to other frames through a set of uncertain transformations at different times.
   The uncertainty of the transformations are represented by a probability distribution over SE(3).
@@ -38,8 +43,8 @@ Frame
   Frames can have user-specified, arbitrary data attached.
 
 Link
-  A probabilistic transformation between two frames, with a type and a time stamp.
-  Several links are allowed between the same two frames, provided they are of different types.
+  A probabilistic transformation between two frames, with a label and a time stamp.
+  Several links are allowed between the same two frames.
   Links can have user-specified, arbitrary data attached.
 
 Estimated Frame Set
@@ -49,14 +54,11 @@ Estimated Frame Set
 
 Data
   Arbitrary binary user data can be attached to Frames and Links.
-  
-Distribution System
-  This API aims at abstracting the database back-end in a way that would allow the latter to scale to a distributed system, conceptually able to scale to encompass all running robots on earth. This implies that the API will talk to a local node that cannot hold the whole data, and that data can be lost if part of the network collapses. This is shocking from a database point of view, but perfectly reasonable from a robotics perspective.
 
 Transaction
   All map queries (excepted trigger bookkeeping) must be performed in a transaction, during which the world is assured to be consistent when viewed from the client.
   A transaction might fail in case of write conflict.
-  This approach ensures the `Atomicity` and `Consistency` properties of the commonly used ACID model in database literature, but does not ensure `Isolation` (parallel writes working on different part of a distributed database might break this property) or `Durability` (a sufficiently-large number of servers dying in a distributed database might result in data loss, as total replicability is not a realistic goal). We do not even aim at an *eventual consistency* model because the typical amount of data produced by modern robotics system hinders the notion of complete replicas.
+  This approach ensures the `Atomicity` and `Consistency` properties of the commonly used ACID model in database literature, but does not ensure `Isolation` (parallel writes working on different parts of a distributed database might break this property) or `Durability` (a sufficiently-large number of servers dying in a distributed database might result in data loss, as total replicability is not a realistic goal). We do not even aim at an *eventual consistency* model because the typical amount of data produced by modern robotic systems hinders the notion of complete replicas.
   The suggested paradigm for implementating transactions is *multiversion concurrency control*.
 
 Trigger
@@ -93,7 +95,7 @@ For a given type ``T``, we implicitely defines ``Ts`` to be a list of ``T``. We 
   The unique identifier of a link, a ``Uint64``.
 ``Link``
   A structure ``(link: LinkId, childFrame: FrameId, parentFrame: FrameId, label: String, time: TimeStamp, transformation: UncertainTransform, confidence: Float64)``.
-  This links ``childFrame`` to ``parentFrame``, by expressing how to transform points from the first to the second, with uncertainty and at a give ``time``.
+  The latter links ``childFrame`` to ``parentFrame``, by expressing how to transform points from the first to the second, with uncertainty and at a give ``time``.
   The ``confidence`` value expresses how much the link creator was confident that this link actually exists. This is not the same information as ``transformation``, which expresses an uncertain transformation of points from ``childFrame`` to ``parentFrame``, assuming that the link exists.
   The ``label`` string allows the user to label links.
 ``DataType``
@@ -120,6 +122,8 @@ Map queries (RPC)
 
 Transaction
 -----------
+
+  SM: TODO: named variables in return tuples for documentation purpose.
 
 ``startTransaction() -> TransactionId``
   Create a new transaction and return its identifier.
