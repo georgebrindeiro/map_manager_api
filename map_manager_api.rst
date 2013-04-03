@@ -1,6 +1,6 @@
 :Info: A map manager API for 3D mapping, navigation and scene interpretation
 :Author: Stéphane Magnenat <stephane at magnenat dot net>
-:Date: 2013-02-20
+:Date: 2013-04-03
 
 =======================================================================
  A map manager API for 3D mapping, navigation and scene interpretation
@@ -11,7 +11,7 @@ Rationale
 
 A modern autonomous robotic system is composed of many software building blocks (SLAM, path planning, scene interpretation), most of them depending on some form of localisation and mapping.
 Therefore, there is a need for an API that allows these different elements to communicate, with as little interdependency as possible.
-This document describes such an API, based on the concept of a transactional map database.
+This document describes such an API, and discusses its implementation, based on the concept of a transactional map database.
 It aims at being as generic as possible and agnostic with respect to the implementation framework.
 It is designed to allow for a fully distributed back-end, while abstracting it in such a way that API users do not need to care about the back-end.
 
@@ -32,39 +32,32 @@ Concepts
 ========
 
 Frame
-  A frame is a coordinate frame located in 3-D space, linked with other frames through a set of probabilistic transformations.
+  A frame is a coordinate frame located in 3-D space, linked to other frames through a set of uncertain transformations at different times.
+  The uncertainty of the transformations are represented by a probability distribution over SE(3).
   Frames have unique identifiers, and can optionally have human-readable names.
-  Frames can hold arbitrary data.
-
-    FC: Transformations are not probabilistic. The knowledge we have of them may be uncertain and we may use probability to represent this uncertainty (with some prior knkowledge/model). I'm not sure how we want to write that.
-
-    FC: I don't understand: "Frames can hold arbitrary data". Coordinate frames usually don't hold data, even if some data is related to coordinate frames.
-
-    FC: Are the frames assumed to be static or can they move? From the lack of time component in the EstimatedFrame data, it seems that we're talking about static frames. I'm not sure I like that, but ROS people will really expect it unless being explicitely told otherwise (and even then... ;)).
+  Frames can have user-specified, arbitrary data attached.
 
 Link
   A probabilistic transformation between two frames, with a type and a time stamp.
   Several links are allowed between the same two frames, provided they are of different types.
-  Links can hold arbitrary data.
+  Links can have user-specified, arbitrary data attached.
 
-    FC: again what is that arbitrary data supposed to be? If it's the confidence, it seems mandatory.
-
-EstimatedFrame
-  A graph of frames can be relaxed to have non-probabilistic poses.
+Estimated Frame Set
+  A graph of frames can be relaxed to estimate deterministic poses, with respect to a given frame.
   Several strategy can be provided by the implementation that will lead to different relaxed values.
+  The result is a set of transforms in SE(3), each associated to a frame, and a common origin and time.
 
-    FC: It seems to me it's not the Frame that is estimated, but the transformation between two of them. Except if you assume an implicit world frame but that is probably worth telling.
-
-    FC: If you have two estimations with two different contexts, how do you handle it/invalidate ? (I would propose spawning a RelaxedWorld_XX frame for each relaxation event but there might be better solutions.)
-
-    FC: The description of EstimatedFrame is only implicit (you only talk about the graph, not the frame).
+Data
+  Arbitrary binary user data can be attached to Frames and Links.
+  
+Distribution System
+  This API aims at abstracting the database back-end in a way that would allow the latter to scale to a distributed system, conceptually able to scale to encompass all running robots on earth. This implies that the API will talk to a local node that cannot hold the whole data, and that data can be lost if part of the network collapses. This is shocking from a database point of view, but perfectly reasonable from a robotics perspective.
 
 Transaction
   All map queries (excepted trigger bookkeeping) must be performed in a transaction, during which the world is assured to be consistent when viewed from the client.
   A transaction might fail in case of write conflict.
+  This approach ensures the `Atomicity` and `Consistency` properties of the commonly used ACID model in database literature, but does not ensure `Isolation` (parallel writes working on different part of a distributed database might break this property) or `Durability` (a sufficiently-large number of servers dying in a distributed database might result in data loss, as total replicability is not a realistic goal). We do not even aim at an *eventual consistency* model because the typical amount of data produced by modern robotics system hinders the notion of complete replicas.
   The suggested paradigm for implementating transactions is *multiversion concurrency control*.
-
-    FC: If you go for transaction, why not have atomicity (actually ACID properties) to avoid write conflict?
 
 Trigger
   Clients can create triggers to watch part of the database and be notified of changes asynchronously.
@@ -72,71 +65,39 @@ Trigger
 Data types used in interfaces
 =============================
 
+Data types are specified in detail to ensure cross-implementation compatibility. They are in general chosen to be generous enough in what they can represent, in order to avoid overflows and limitations. Client libraries are allowed to use other and shorter data types (for instance ``ROS::Time`` for ``TimeStamp`` in ROS) for the ease of interfacing, but the backend must use the proposed types.
+
+For a given type ``T``, we implicitely defines ``Ts`` to be a list of ``T``. We assume common scalar types (bool, int, float) to be available and defined implicitely.
+
 ``TransactionId``
   The unique identifier of a transaction, a ``Uint64``.
 ``TimeStamp``
-  A high-precision time stamp, a tuple ``(Int64, Int32)`` in which the first element represents the number of seconds since 1 January 1970, not counting leap seconds (POSIX time), and the second element in the nano-second sub-precision.
-
-    FC: ROS is using ``(Int32, Int32)``, C++11 proposes ``(Rep, Ratio)`` where Rep is a number type and Ratio a multiplier in seconds. Why being so specific about it? and why this specific choice different from (some) (reasonnable) standards?
-
+  A high-precision time stamp, a tuple ``(Int64, Int32)`` in which the first element represents the number of seconds since 1 January 1970, not counting leap seconds (POSIX time), and the second element in the nano-second sub-precision. 
+``Interval``
+  A tuple ``(start:TimeStamp, end:TimeStamp)`` denoting a time interval.
 ``FrameId``
-  The unique identifier of a frame, a 32-byte array.
-  In a distributed system, the first 16 bytes shall identify the host (for instance holding an IPv6 address); in a centralised system, these can be 0.
-  The last 16 bytes shall implement an identifier that is unique on this host, for instance an ever-increasing number.
-  The identifier space generated by 16 bytes is large enough such the host will never produce the same number twice during its life time.
-``FrameIds``
-  A list of ``FrameId``.
-
-    FC: gathering lists of stuff somewhere else may ease reading. Or you can define a generic list of Stuff as Stuffs.
-
+  The unique identifier of a frame, a ``Uint64``.
 ``FrameName``
   A human-readable text naming important frames, like "world", a ``String``.
-
-    FC: shouldn't there be a Frame data: ``(FrameId, FrameName)`` (cf [g|s]etFrameName below)?
-
-    FC: It seems you can have several frames with the same name and then you use a unique index to differentiate. That's a choice worth of emphasis (I'm not sure I share that).
-
+  Frame names are unique in the whole system.
 ``Transform``
-  A non-probabilistic 3-D transformation, in SE(3), implemented as a 4x4 matrix of ``Float64``.
-``EstimatedFrame``
-  A tuple ``(id: FrameId, transform: Transform)`` representing a frame with coordinates estimated with respect to another frame.
-
-    FC: here there is an implicit reference frame. Why not similar to Link?
-
-    FC: time is missing here. Cf static frame discussion above.
-
-``EstimatedFrames``
-  A list of ``EstimatedFrame``.
-``ProbTransform``
-  A probabilistic 3-D transformation in SE(3), composed of a ``Transform`` and a 6x6 covarience matrix.
-  
-  **SM: What is this encoding?**
-  **PTF: I know what encoding I like. It is different than the encoding suggested for ROS. Whatever we pick, it should be clearly documented (mathematically) with a little library attached. My implementation is here https://github.com/furgalep/Schweizer-Messer/tree/master/sm_kinematics but it probably needs some more editing and documentation.**
-``LinkType``
-  A type of link, a ``String``.
-  This allows multiple links of different types between two frames.
-
-    FC: I'm mixed between calling it a LinkLabel and keeping LinkType but with an enum instead of a string.
-
-    FC: Allowance of multiple links of different types is described below, but does not seem necessary here.
-
+  A deterministic 3-D transformation, in SE(3), implemented as a 4x4 matrix of ``Float64``.
+``AttachedTransform``
+  A transformation attached to a frame (the coordinate frame this transform defines), a tuple ``(id: FrameId, transform: Transform)``.
+``EstimatedFrameSet``
+  The result of a graph relaxation operation.
+  A structure ``(origin: FrameId, time: Interval, estimates: AttachedTransform)``, in which ``estimates`` are frames expressed with respect to ``origin``, during the interval ``time``.
+``UncertainTransform``
+  An uncertain 3-D transformation in SE(3), composed of a ``Transform`` and a Gaussian uncertainty of the transformation in the tangent space of SE(3) (a 6x6 covarience matrix).
 ``LinkId``
-  A tuple ``(frame0: FrameId, frame1: FrameId, type: LinkType, time: TimeStamp)``.
-  This uniquely identifies a link.
-  The map manager cannot hold two ``LinkId`` with similar ``type`` and ``time``, and similar but inverted frames ``frame0`` and ``frame1``.
-``LinkIds``
-  A list of ``LinkId``.
+  The unique identifier of a link, a ``Uint64``.
 ``Link``
-  A tuple ``(link: LinkId, transformation: ProbTransform, confidence: Float64)``, in which ``confidence`` expresses how much the link creator was confident that this link actually exists. This is not the same information as ``transformation``, which expresses a probabilistic transformation from ``link.frame1`` to ``link.frame0``, assuming that the link exists.
-
-    FC: there is a lack of symmetry between the FrameId and the LinkId. FrameId is a unique index and the (missing) Frame object links the id to its name and you propose to use FrameId as a sort of handle for all the API. Why not doing the same with links? Have a unique LinkId and the Link table would have corresponding info: frame0, frame1, type, stamp, transform, confidence. But having the current LinkID structure seems inconvenient as a handle and splitting the time/transformation+confidence in this manner is rather arbitrary. 
-
-``Links``
-  A list of ``Link``.
+  A structure ``(link: LinkId, childFrame: FrameId, parentFrame: FrameId, label: String, time: TimeStamp, transformation: UncertainTransform, confidence: Float64)``.
+  This links ``childFrame`` to ``parentFrame``, by expressing how to transform points from the first to the second, with uncertainty and at a give ``time``.
+  The ``confidence`` value expresses how much the link creator was confident that this link actually exists. This is not the same information as ``transformation``, which expresses an uncertain transformation of points from ``childFrame`` to ``parentFrame``, assuming that the link exists.
+  The ``label`` string allows the user to label links.
 ``DataType``
   A type of data to be attached to a frame or a link, a ``String``.
-``DataTypes``
-  A list of ``DataType``.
 ``DataBlob``
   Opaque binary data.
 ``Data``
@@ -145,17 +106,14 @@ Data types used in interfaces
   A (multi)map of ``FrameId -> Data``.
 ``LinkDataSet``
   A (multi)map of ``LinkIds -> Data``.
-
-    FC: I understand now the "Frame can hold data" sentence, I would actually add Data as a concept and say that Data can be linked to frames and links.
-
 ``Box``
   A three-dimensional box in space defined by its two opposite corners, hence a pair of tuples ``((xmin: Float64, ymin: Float64, zmin: Float64), (xmax: Float64, ymax: Float64, zmax: Float64))``.
 ``EstimationStrategy``
   The estimation strategy to use to estimate non-probabilistic frames, a ``String``.
 ``TriggerId``
   Trigger identifier; because it refers to the transport mechanism and not to the database scheme, its type is implementation-dependent.
-``TriggerIds``
-  A list of ``TriggerId``.
+  
+    SM: TODO: split this into different types for different triggers.
   
 Map queries (RPC)
 =================
@@ -179,25 +137,33 @@ For clarity, these are not written explicitely in the following RPC signatures.
 Relaxation
 ----------
 
-  FC: In all this section, it might be unclear whether ``origin`` is just there for defining which neighborhood or it's also the reference in which the transform will be expressed.
+    SM: TODO: add more time option, such as "most recent one", etc. 
+  
+    SM: TODO: allow to filter using labels
+    
+    SM: TODO: maybe unify these above two and the following 4 functions using the concepts of TimeFilter, LabelFilter and SpaceFilter.
 
-``estimateFrames(origin: FrameId, strategy: EstimationStrategy = "") -> EstimatedFrames``
-  Return all frames linked to ``origin`` using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateFrames(time: Interval, origin: FrameId, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
+  Return all frames linked to ``origin`` during ``time``, using a given ``strategy``; if none given, use the default provided by the implementation.
   The frames' coordinates are relative to ``origin``, which therefore is identity.
   If the implementation does not provide ``strategy``, it is allowed to use its default one.
-``estimateFramesWithinBox(origin: FrameId, box: Box, strategy: EstimationStrategy = "") -> EstimatedFrames``
-  Return all frames linked to ``origin`` within ``box`` (relative to ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateFramesWithinBox(time: Interval, origin: FrameId, box: Box, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
+  Return all frames linked to ``origin`` during ``time``, within ``box`` (relative to ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
   The frames' coordinates are relative to ``origin``, which therefore is identity.
   If part of the pose graph is within the box, but the part connecting it to ``origin`` is outside of the box, the inclusion of this part is left to the implementation.
   If the implementation does not provide ``strategy``, it is allowed to use its default one.
-``estimateFramesWithinSphere(origin: FrameId, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrames``
-  Return all frames linked to ``origin`` within ``radius`` (centered on ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateFramesWithinSphere(time: Interval, origin: FrameId, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
+  Return all frames linked to ``origin`` during ``time``, within ``radius`` (centered on ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
   The frames' coordinates are relative to ``origin``, which therefore is identity.
   If the implementation does not provide ``strategy``, it is allowed to use its default one.
-``estimateNeighboringFrames(origin: FrameId, linkDist: Uint64, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrames``
-  Return frames linked to ``origin`` within ``radius`` (centered on ``origin``) and at maximum ``linkDist`` number of links, using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateNeighboringFrames(time: Interval, origin: FrameId, linkDist: Uint64, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
+  Return frames linked to ``origin`` during ``time``, within ``radius`` (centered on ``origin``) and at maximum ``linkDist`` number of links, using a given ``strategy``; if none given, use the default provided by the implementation.
   The frames' coordinates are relative to ``origin``, which therefore is identity.
   If the implementation does not provide ``strategy``, it is allowed to use its default one.
+  
+    SM: TODO: define what it means being "inside" as we have uncertain transformations. Should we ignore the uncertainty? Or on the contrary make an iterative relaxation-selection process? Maybe this is part of strategy and should be left to the backend.
+    
+    SM: TODO: separate link selections from relaxation.
 
 Data access
 -----------
@@ -213,13 +179,16 @@ Data access
   Return all links touching frame.
 ``getFrameName(frame: FrameId) -> String``
   Get the human-readable name of a frame.
+  
+  SM: TODO: add the selecting of links, mostly from relaxation section.
 
 Setters
 -------
 
-``setLink(frame0: FrameId, frame1: FrameId, transform: ProbTransform, confidence: Float64, edgeType: UInt64 )``
-  Set a link between two frames, if the link (or its reverse) exists, its transform and confidence are replaced.
-``deleteLink(frame0: FrameId, frame1: FrameId, type: LinkType)``
+``setLink(childFrame: FrameId, parentFrame: FrameId, label: String, time: Timestamp, transform: UncertainTransform, confidence: Float64, edgeType: UInt64 ) -> LinkId``
+  Set a link between two frames and return its identifier.
+``deleteLink(link: LinkId)``
+  Remove a give link between two frames.
   Remove the link (or its reverse) of a given type between two frames.
   This removes this link for all time stamps, and deletes all data associated with this link.
 ``setFrameData(frame: FrameId, Data: data)``
@@ -230,13 +199,14 @@ Setters
   Set data for ``link``, if ``data.type`` already exists, the corresponding data are overwritten.
 ``deleteLinkData(link: LinkId, type: DataType)``
   Delete data of a give type in a given link.
-``createFrame() -> FrameId``
+``createFrame(name: String = none) -> FrameId``
   Create and return a new FrameId, which is guaranteed to be unique.
-
-    FC: I would create a symmetry between frames and links by fusing createFrame and setFrameName, and having setLink return a unique index.
-
-``setFrameName(frame: FrameId, name: String)``
+  Optionally pass a name.
+  If a name is passed, this call requires accessing a global name registry, and therefore might take time to complete.
+``setFrameName(frame: FrameId, name: String) -> Bool``
   Set the human-readable name of a frame.
+  Return true if the name has been set, false if another frame already has this name.
+  Because this call require accessing a global name registry, it might take time to complete.
 ``deleteFrame(frame: FrameId)``
   Delete a frame, all its links and all its data.
 
@@ -247,13 +217,10 @@ Triggers (messages)
 Available types
 ---------------
 
-``linksChanged(added: Links, removed: Links)``
+``linksChanged(added: LinkIds, removed: LinkIds)``
   Links have been added to or removed from a set of watched frames.
-``framesMoved(frames: FrameIds, origin: FrameId)``
-  A set of frames have been moved with respect to ``origin``.
-
-    FC: Is it the frame that has moved or the knowledge we have of its transformation with respect to origin that has changed? This is unclear throughout all the API actually.
-
+``estimatedFramesMoved(frames: FrameIds, origin: FrameId)``
+  The estimated postition of a set of frames have been moved with respect to ``origin``.
 ``frameDataChanged(frames: FrameIds, type: DataType)``
   Data have been changed for a set of watched frames and a data type.
 ``linkDataChanged(links: LinkIds, type: DataType)``
@@ -265,22 +232,39 @@ Trigger book-keeping
 
 These trigger-bookkeeping queries do not operate within transactions and might fail, by returning invalid trigger identifiers.
 
-``watchLinks(frames: FrameIds, existingTrigger = null: TriggerId) -> TriggerId``
+``watchLinks(frames: FrameIds, existingTrigger = none: TriggerId) -> TriggerId``
   Watch a set of frames for link changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
-``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), existingTrigger = null: TriggerId) -> TriggetId``
+``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), existingTrigger = none: TriggerId) -> TriggetId``
   Watch a set of frames for estimated pose changes with respect to origin.
   Set the threshold in (translation, rotation) below which no notification occurs.
   All frames must exist and have a link to origin, otherwise this query fails.
-``watchFrameData(frames: FrameIds, type: DataType, existingTrigger = null: TriggerId) -> TriggerId``
+  
+  SM: TODO: clean up rexation API and then revamp this call
+  
+``watchFrameData(frames: FrameIds, type: DataType, existingTrigger = none: TriggerId) -> TriggerId``
   Watch a set of frames for data changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
-``watchLinkData(links: LinkIds, type: DataType, existingTrigger = null: TriggerId) -> TriggerId``
+``watchLinkData(links: LinkIds, type: DataType, existingTrigger = none: TriggerId) -> TriggerId``
   Watch a set of links for data changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
 ``deleteTriggers(triggers: TriggerIds)``
   Delete triggers if they exist.
-  
+
+
+Notes for distributed implementations
+=====================================
+ 
+Unique identifiers
+------------------
+ 
+In this documents, unique identifiers (``FrameId`` and ``LinkId``) have type ``Uint64``, whose range is large enough to refer objects between the client and the backend.
+However, in a distributed system where multiple backend have to communicate asynchronously, this might not be large enough.
+In such a system, we propose to use a 32 byte identifier.
+The first 16 bytes shall identify the host (for instance holding an IPv6 address); in a centralised system, these can be 0.
+The last 16 bytes shall implement an identifier that is unique on this host, for instance an ever-increasing number.
+The identifier space generated by 16 bytes is large enough such the host will never produce the same number twice during its life time.
+The backend shall provide a bijective mapping between the identifiers used by the API and the ones used between backends.
