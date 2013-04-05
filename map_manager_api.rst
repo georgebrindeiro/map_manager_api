@@ -50,9 +50,10 @@ Link
 
 Estimated Frame Set
   A graph of frames can be relaxed to estimate deterministic poses, with respect to a given frame.
-  Several strategy can be provided by the implementation that will lead to different relaxed values.
   The result is a set of transforms in SE(3), each associated to a frame, and a common origin and time.
-
+  The back-end is free to define its own strategy, and different strategies can lead to different relaxed values.
+  It is the responsibility of the back-end to document its strategy.
+  
 Data
   Arbitrary binary user data can be attached to Frames and Links.
 
@@ -60,7 +61,7 @@ Transaction
   All map queries (excepted trigger bookkeeping) must be performed in a transaction, during which the world is assured to be consistent when viewed from the client.
   A transaction might fail in case of write conflict.
   This approach ensures the `Atomicity` and `Consistency` properties of the commonly used ACID model in database literature, but does not ensure `Isolation` (parallel writes working on different parts of a distributed database might break this property) or `Durability` (a sufficiently-large number of servers dying in a distributed database might result in data loss, as total replicability is not a realistic goal). We do not even aim at an *eventual consistency* model because the typical amount of data produced by modern robotic systems hinders the notion of complete replicas.
-  The suggested paradigm for implementating transactions is *multiversion concurrency control*.
+  The suggested paradigm for implementing transactions is *multiversion concurrency control*.
 
 Trigger
   Clients can create triggers to watch part of the database and be notified of changes asynchronously.
@@ -70,12 +71,12 @@ Data types used in interfaces
 
 Data types are specified in detail to ensure cross-implementation compatibility. They are in general chosen to be generous enough in what they can represent, in order to avoid overflows and limitations. Client libraries are allowed to use other and shorter data types (for instance ``ROS::Time`` for ``TimeStamp`` in ROS) for the ease of interfacing, but the back-end must use the proposed types.
 
-For a given type ``T``, we implicitely defines ``Ts`` to be a list of ``T``. We assume common scalar types (bool, int, float) to be available and defined implicitely.
+For a given type ``T``, we implicitly defines ``Ts`` to be a list of ``T``. We assume common scalar types (bool, int, float) to be available and defined implicitly.
 
 ``TransactionId``
   The unique identifier of a transaction, a ``Uint64``.
 ``TimeStamp``
-  A high-precision time stamp, a tuple ``(Int64, Int32)`` in which the first element represents the number of seconds since 1 January 1970, not counting leap seconds (POSIX time), and the second element in the nano-second sub-precision. 
+  A high-precision time stamp, a tuple ``(seconds: Int64, nanoseconds: Int32)`` in which the first element represents the number of seconds since 1 January 1970, not counting leap seconds (POSIX time), and the second element in the nano-second sub-precision. 
 ``Interval``
   A tuple ``(start:TimeStamp, end:TimeStamp)`` denoting a time interval.
 ``FrameId``
@@ -115,12 +116,12 @@ For a given type ``T``, we implicitely defines ``Ts`` to be a list of ``T``. We 
 ``TriggerId``: any of { ``TriggerLinkChangedId``, ``TriggerPoseChangedId``, ``TriggerFrameDataChangedId``, ``TriggerLinkDataChangedId`` }
   Trigger identifiers; because these refer to the transport mechanism and not to the database scheme, their types are implementation-dependent.
 
-Some data types are filters to choose links to be used for relaxation and selection. These are:
+Some data types are filters select links:
     
 ``TimeFilter``
   A strategy to filter by time.
   A tuple ``(time: Interval, strategy: String)`` defining an interval and a strategy to interpret it, specific to the back-end.
-  All back-ends should implement the following values for ``strategy``: "earliest", "interval", "latest" that respectively select the earliest, all, and the most recent links that match other criteria during ``time``.
+  All back-ends should implement the following values for ``strategy``: "earliest", "interval", "latest", "closest" that respectively select the earliest link, all links, the most recent link, and the closest link to start time (even outside interval) that match other criteria during ``time``.
 ``LabelFilter``
   A strategy to filter by label.
   A tuple ``(labels: Labels, strategy: String)`` defining a list of labels and a strategy to interpret it, specific to the back-end.
@@ -128,6 +129,9 @@ Some data types are filters to choose links to be used for relaxation and select
   
 Map queries (RPC)
 =================
+
+We assume that the RPC mechanism provides a way to report failures in calls, either through exceptions or an additional return value.
+If any call fail within a transaction, the transaction is considered a failure and all subsequent calls will fail, including the commit of the transaction.
 
 Transaction
 -----------
@@ -143,7 +147,7 @@ Transaction
   Abort a transaction, giving a reason for server logs.
   
 All further messages in this section are assumed to take a ``TransactionId`` as first parameter.
-For clarity, these are not written explicitely in the following RPC signatures.
+For clarity, these are not written explicitly in the following RPC signatures.
 
 Spacial selection and relaxation
 --------------------------------
@@ -155,21 +159,18 @@ Spacial selection and relaxation
 ``estimateFramesWithinBox(origin: FrameId, box: Box, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
   Estimate deterministic pose of all frames linked to ``origin`` within ``box`` (relative to ``origin``), optionally filtered by time and label.
   The returned frames' coordinates are relative to ``origin``.
-  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+  The back-end is free to select its strategy to interpret `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
 ``estimateFramesWithinSphere(origin: FrameId, radius: Float64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
-  Estimate deterministic pose of all frames linked to ``origin`` within ``radius`` (centered on ``origin``), optionally filtered by time and label.
+  Estimate deterministic pose of all frames linked to ``origin`` within ``radius`` (centred on ``origin``), optionally filtered by time and label.
   The returned frames' coordinates are relative to ``origin``.
-  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
-``estimateNeighboringFrames(origin: FrameId, linkDist: Uint64, radius: Float64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
-  Estimate deterministic pose of frames linked to ``origin``, within ``radius`` (centered on ``origin``) and at maximum ``linkDist`` number of links, optionally filtered by time and label.
+  The back-end is free to select its strategy to interpret `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+``estimateNeighbourFrames(origin: FrameId, neighbourDist: Uint64, radius: Float64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
+  Estimate deterministic pose of frames linked to ``origin``, within ``radius`` (centred on ``origin``) and at maximum ``neighbourDist`` number of frames away in the graph, optionally filtered by time and label.
   The returned frames' coordinates are relative to ``origin``.
-  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
-``getLinks(frames: FrameIds, returnForeign: Bool, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> LinkIds``
-  Return all links between any of two ``frames``, filtered by time and label.
-  If ``returnForeign`` is true, also consider ones linking a frame in ``frames`` to a foreign frame not in the list.
-``getNeigbourFrames(frames: FrameIds, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> FrameIds``
-  Return all neighbours of frames, with no duplicates.
-  These are all frames linked to ``frames``, for which there exist at least one link to is accepted by the time and label filters.
+  The back-end is free to select its strategy to interpret `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+``getLinks(frames: FrameIds, neighbourDist = 0: Uint64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> LinkIds``
+  Return all links between any of two ``frames`` and neighbour frames up to a maximum of ``neighbourDist`` number of frames away in the graph, filtered by time and label.
+
     
 Data access
 -----------
@@ -182,8 +183,10 @@ Data access
   Return all data of ``types`` contained in ``links``.
 ``getFrameName(frame: FrameId) -> String``
   Get the human-readable name of a frame.
+  Because this call require accessing a global name registry, it might take time to complete.
 ``getFrameId(name: String) -> FrameId``
   Return the identifier of a frame of a given ``name``.
+  Because this call require accessing a global name registry, it might take time to complete.
 
 Setters
 -------
@@ -211,6 +214,7 @@ Setters
   Because this call require accessing a global name registry, it might take time to complete.
 ``deleteFrame(frame: FrameId)``
   Delete a frame, all its links and all its data.
+  Because this call might require accessing a global name registry, it might take time to complete.
 
   
 Triggers (messages)
@@ -219,27 +223,28 @@ Triggers (messages)
 Available types
 ---------------
 
-``linksChanged(added: LinkIds, removed: LinkIds)``
+``linksChanged(added: LinkIds, removed: LinkIds, modified: LinkIds)`` referred by ``TriggerLinkChangedId``
   Links have been added to or removed from a set of watched frames.
-``estimatedFramesMoved(frames: FrameIds, origin: FrameId)``
-  The estimated postition of a set of frames have been moved with respect to ``origin``.
-``frameDataChanged(frames: FrameIds, type: DataType)``
+``estimatedFramesMoved(frames: FrameIds, origin: FrameId)`` referred by ``TriggerPoseChangedId``
+  The estimated pose of a set of frames have been moved with respect to ``origin``.
+``frameDataChanged(frames: FrameIds, type: DataType)`` referred by ``TriggerFrameDataChangedId``
   Data have been changed for a set of watched frames and a data type.
-``linkDataChanged(links: LinkIds, type: DataType)``
+``linkDataChanged(links: LinkIds, type: DataType)`` referred by ``TriggerLinkDataChangedId``
   Data have been changed for a set of watched links and a data type.
 
+    SM: FIXME: should we have a trigger for frame removed as well? It would be nice for consistency, but practically this seems a rare use case.
   
 Trigger book-keeping
 --------------------
 
-These trigger-bookkeeping queries do not operate within transactions and might fail, by returning invalid trigger identifiers.
+These trigger bookkeeping queries do not operate within transactions and might fail, by returning invalid trigger identifiers.
 
-``watchLinks(frames: FrameIds, existingTrigger = none: TriggerLinkChangedId) -> TriggerLinkChangedId``
-  Watch a set of frames for link changes, return the trigger identifier.
+``watchLinks(frames: FrameIds, labelFilter = none: LabelFilter, existingTrigger = none: TriggerLinkChangedId) -> TriggerLinkChangedId``
+  Watch a set of frames for changes of their links (addition, removal, value modification), optionally filtered by labels, and return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
-``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), existingTrigger = none: TriggerPoseChangedId) -> TriggerPoseChangedId``
-  Watch a set of frames for estimated pose changes with respect to origin.
+``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), labelFilter = none: LabelFilter, existingTrigger = none: TriggerPoseChangedId) -> TriggerPoseChangedId``
+  Watch a set of frames for estimated pose changes with respect to ``origin``, optionally filtered by labels, and return the trigger identifier.
   Set the threshold in (translation, rotation) below which no notification occurs.
   All frames must exist and have a link to origin, otherwise this query fails.
 ``watchFrameData(frames: FrameIds, type: DataType, existingTrigger = none: TriggerFrameDataChangedId) -> TriggerFrameDataChangedId``
@@ -262,7 +267,7 @@ Unique identifiers
  
 In this documents, unique identifiers (``FrameId`` and ``LinkId``) have type ``Uint64``, whose range is large enough to refer objects between the client and the back-end.
 However, in a distributed system where multiple back-ends have to communicate asynchronously, this might not be large enough.
-In such a system, we propose to use a 32 byte identifier.
+In such a system, we propose to use a 32-byte identifier.
 The first 16 bytes shall identify the host (for instance holding an IPv6 address); in a centralised system, these can be 0.
 The last 16 bytes shall implement an identifier that is unique on this host, for instance an ever-increasing number.
 The identifier space generated by 16 bytes is large enough such the host will never produce the same number twice during its life time.
