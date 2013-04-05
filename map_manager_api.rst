@@ -1,6 +1,8 @@
 :Info: A map manager API for 3D mapping, navigation and scene interpretation
-:Author: Stéphane Magnenat <stephane at magnenat dot net>
-:Date: 2013-04-03
+:Authors: - Stéphane Magnenat <stephane at magnenat dot net> (maintainer)
+          - Francis Colas <francis dot colas at mavt dot ethz dot ch> (contributor)
+          - Paul Furgale <paul dot furgale at mavt dot ethz dot ch> (contributor)
+:Date: 2013-04-05
 
 =======================================================================
  A map manager API for 3D mapping, navigation and scene interpretation
@@ -13,7 +15,7 @@ A modern autonomous robotic system is composed of many software building blocks 
 Therefore, there is a need for an API that allows these different elements to communicate, with as little interdependency as possible.
 This document describes such an API, and discusses its implementation, based on the concept of a transactional map database.
 It aims at being as generic as possible and agnostic with respect to the implementation framework.
-It is designed to allow for a fully distributed back-end, while abstracting it in such a way that API users do not need to care about the back-end.
+It is designed to allow for a fully distributed back-end, while abstracting it in such a way that API users do not need to care about it.
 
 Framework requirements
 ======================
@@ -25,6 +27,7 @@ Writing conventions
 ===================
 
 When variables are described, the convention ``variable: Type`` is used, with ``variable`` having its first letter in lower case and ``Type`` in upper case, and using *CamelCase* for multiple words.
+Optional default values are given after the name: ``variable = value: Type``, if ``value`` is ``none``, the argument is optional.
 
 When RPC or messages are described, the convention ``name(arguments) -> ReturnType`` is used, in CamelCase as well.
 
@@ -109,12 +112,8 @@ For a given type ``T``, we implicitely defines ``Ts`` to be a list of ``T``. We 
   A (multi)map of ``LinkIds -> Data``.
 ``Box``
   A three-dimensional box in space defined by its two opposite corners, hence a pair of tuples ``((xmin: Float64, ymin: Float64, zmin: Float64), (xmax: Float64, ymax: Float64, zmax: Float64))``.
-``EstimationStrategy``
-  The estimation strategy to use to estimate non-probabilistic frames, a ``String``.
-``TriggerId``
-  Trigger identifier; because it refers to the transport mechanism and not to the database scheme, its type is implementation-dependent.
-  
-    SM: TODO: split this into different types for different triggers.
+``TriggerId``: any of { ``TriggerLinkChangedId``, ``TriggerPoseChangedId``, ``TriggerFrameDataChangedId``, ``TriggerLinkDataChangedId`` }
+  Trigger identifiers; because these refer to the transport mechanism and not to the database scheme, their types are implementation-dependent.
 
 Some data types are filters to choose links to be used for relaxation and selection. These are:
     
@@ -146,33 +145,29 @@ Transaction
 All further messages in this section are assumed to take a ``TransactionId`` as first parameter.
 For clarity, these are not written explicitely in the following RPC signatures.
 
-Spacial selection and Relaxation
+Spacial selection and relaxation
 --------------------------------
 
-``estimateFrames(links: LinkIds, origin: FrameId, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
-  Estimate deterministic pose of all frames in ``links``, using a given ``strategy``; if none given, use the default provided by the implementation.
-  If the implementation does not provide ``strategy``, it is allowed to use its default one.
-  The returned frames' coordinates are relative to ``origin``, which must exist in ``links``, that must all be indirectly connected.
-``estimateFramesWithinBox(timeFilter: TimeFilter = none, labelFilter: LabelFilter = none, origin: FrameId, box: Box, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
-  Return all frames linked to ``origin``, optionally filtered by time and label, within ``box`` (relative to ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateFrames(origin: FrameId, links: LinkIds) -> EstimatedFrameSet``
+  Estimate deterministic pose of all frames in ``links``, relative to ``origin``.
+  The frame ``origin`` must be included in ``links``, which must all be directly or indirectly connected.
   The returned frames' coordinates are relative to ``origin``.
-  If part of the pose graph is within the box, but the part connecting it to ``origin`` is outside of the box, the inclusion of this part is left to the implementation.
-  If the implementation does not provide ``strategy``, it is allowed to use its default one.
-``estimateFramesWithinSphere(timeFilter: TimeFilter = none, labelFilter: LabelFilter = none, origin: FrameId, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
-  Return all frames linked to ``origin``, optionally filtered by time and label, within ``radius`` (centered on ``origin``) using a given ``strategy``; if none given, use the default provided by the implementation.
+``estimateFramesWithinBox(origin: FrameId, box: Box, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
+  Estimate deterministic pose of all frames linked to ``origin`` within ``box`` (relative to ``origin``), optionally filtered by time and label.
   The returned frames' coordinates are relative to ``origin``.
-  If the implementation does not provide ``strategy``, it is allowed to use its default one.
-``estimateNeighboringFrames(timeFilter: TimeFilter = none, labelFilter: LabelFilter = none, origin: FrameId, linkDist: Uint64, radius: Float64, strategy: EstimationStrategy = "") -> EstimatedFrameSet``
-  Return frames linked to ``origin``, optionally filtered by time and label, within ``radius`` (centered on ``origin``) and at maximum ``linkDist`` number of links, using a given ``strategy``; if none given, use the default provided by the implementation.
+  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+``estimateFramesWithinSphere(origin: FrameId, radius: Float64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
+  Estimate deterministic pose of all frames linked to ``origin`` within ``radius`` (centered on ``origin``), optionally filtered by time and label.
   The returned frames' coordinates are relative to ``origin``.
-  If the implementation does not provide ``strategy``, it is allowed to use its default one.
-  
-    SM: TODO: define what it means being "inside" as we have uncertain transformations. Should we ignore the uncertainty? Or on the contrary make an iterative relaxation-selection process? Maybe this is part of strategy and should be left to the back-end.
-
-``getLinks(frames: FrameIds, returnForeign: Bool, timeFilter: TimeFilter = none, labelFilter: LabelFilter = none) -> LinkIds``
+  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+``estimateNeighboringFrames(origin: FrameId, linkDist: Uint64, radius: Float64, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> EstimatedFrameSet``
+  Estimate deterministic pose of frames linked to ``origin``, within ``radius`` (centered on ``origin``) and at maximum ``linkDist`` number of links, optionally filtered by time and label.
+  The returned frames' coordinates are relative to ``origin``.
+  The back-end is free to select its strategy to interprete `within` with respect to the uncertainty of the transformations, and to select its own relaxation strategy.
+``getLinks(frames: FrameIds, returnForeign: Bool, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> LinkIds``
   Return all links between any of two ``frames``, filtered by time and label.
   If ``returnForeign`` is true, also consider ones linking a frame in ``frames`` to a foreign frame not in the list.
-``getNeigbourFrames(frames: FrameIds, timeFilter: TimeFilter = none, labelFilter: LabelFilter = none) -> FrameIds``
+``getNeigbourFrames(frames: FrameIds, timeFilter = none: TimeFilter, labelFilter = none: LabelFilter) -> FrameIds``
   Return all neighbours of frames, with no duplicates.
   These are all frames linked to ``frames``, for which there exist at least one link to is accepted by the time and label filters.
     
@@ -193,7 +188,7 @@ Data access
 Setters
 -------
 
-``setLink(Link: content, reuseId: LinkId = none) -> LinkId``
+``setLink(Link: content, reuseId = none: LinkId) -> LinkId``
   Set a link between two frames and return its identifier.
   If ``reuseId`` is given, reuse this identifier instead of creating a new one, and keep attached data.
 ``deleteLinks(links: LinkIds)``
@@ -206,7 +201,7 @@ Setters
   Set data for ``link``, if ``data.type`` already exists, the corresponding data are overwritten.
 ``deleteLinkData(link: LinkId, type: DataType)``
   Delete data of a give type in a given link.
-``createFrame(name: String = none) -> FrameId``
+``createFrame(name = none: String) -> FrameId``
   Create and return a new FrameId, which is guaranteed to be unique.
   Optionally pass a name.
   If a name is passed, this call requires accessing a global name registry, and therefore might take time to complete.
@@ -239,19 +234,19 @@ Trigger book-keeping
 
 These trigger-bookkeeping queries do not operate within transactions and might fail, by returning invalid trigger identifiers.
 
-``watchLinks(frames: FrameIds, existingTrigger = none: TriggerId) -> TriggerId``
+``watchLinks(frames: FrameIds, existingTrigger = none: TriggerLinkChangedId) -> TriggerLinkChangedId``
   Watch a set of frames for link changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
-``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), strategy: EstimationStrategy = "", existingTrigger = none: TriggerId) -> TriggetId``
-  Watch a set of frames for estimated pose changes with respect to origin, using a given ``strategy``; if none given, use the default provided by the implementation.
+``watchEstimatedTransforms(frames: FrameIds, origin: FrameId, epsilon: (Float64, Float64), existingTrigger = none: TriggerPoseChangedId) -> TriggerPoseChangedId``
+  Watch a set of frames for estimated pose changes with respect to origin.
   Set the threshold in (translation, rotation) below which no notification occurs.
   All frames must exist and have a link to origin, otherwise this query fails.
-``watchFrameData(frames: FrameIds, type: DataType, existingTrigger = none: TriggerId) -> TriggerId``
+``watchFrameData(frames: FrameIds, type: DataType, existingTrigger = none: TriggerFrameDataChangedId) -> TriggerFrameDataChangedId``
   Watch a set of frames for data changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
-``watchLinkData(links: LinkIds, type: DataType, existingTrigger = none: TriggerId) -> TriggerId``
+``watchLinkData(links: LinkIds, type: DataType, existingTrigger = none: TriggerLinkDataChangedId) -> TriggerLinkDataChangedId``
   Watch a set of links for data changes, return the trigger identifier.
   Optionally reuse an existing trigger of the same type.
   All frames must exist, otherwise this query fails.
@@ -272,5 +267,3 @@ The first 16 bytes shall identify the host (for instance holding an IPv6 address
 The last 16 bytes shall implement an identifier that is unique on this host, for instance an ever-increasing number.
 The identifier space generated by 16 bytes is large enough such the host will never produce the same number twice during its life time.
 The back-end shall provide a bijective mapping between the identifiers used by the API and the ones used between back-ends.
-  
-  SM: TODO: move discussion about implementation of ``TimeStamp`` here.
